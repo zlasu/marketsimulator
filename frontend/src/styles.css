@@ -195,13 +195,13 @@ h1 {
 }
 
 .bid-liquidity {
-  fill: #13e23b;
-  filter: drop-shadow(0 0 5px rgba(19, 226, 59, 0.9));
+  fill: #086f1d;
+  filter: drop-shadow(0 0 3px rgba(8, 111, 29, 0.45));
 }
 
 .ask-liquidity {
-  fill: #ff1717;
-  filter: drop-shadow(0 0 5px rgba(255, 23, 23, 0.9));
+  fill: #851010;
+  filter: drop-shadow(0 0 3px rgba(133, 16, 16, 0.45));
 }
 
 .up-stroke,
@@ -216,7 +216,7 @@ h1 {
 
 .up-stroke,
 .down-stroke {
-  stroke-width: 2.2;
+  stroke-width: 1.2;
 }
 
 .up-fill {
