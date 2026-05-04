@@ -1,6 +1,6 @@
 # Market Simulator
 
-Market simulator inspired by the source materials in `materials/`: random traders place orders near the latest traded price, the order book stores maker liquidity, and takers consume that liquidity. Any unfilled remainder stays in the book as a limit order, creating visible liquidity walls on the chart.
+Random Market Simulator inspired by the Krafter Youtube video: random traders place orders near the latest traded price, the order book stores maker liquidity, and takers consume that liquidity. Any unfilled remainder stays in the book as a limit order, creating visible liquidity walls on the chart.
 
 ## Running
 
