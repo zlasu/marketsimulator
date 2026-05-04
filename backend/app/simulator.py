@@ -11,6 +11,8 @@ Side = Literal["buy", "sell"]
 @dataclass
 class Candle:
     index: int
+    start_tick: int
+    end_tick: int
     open: float
     high: float
     low: float
@@ -83,6 +85,7 @@ class MarketSimulator:
         self.flow_bias = 0.0
         self.tick_index = 0
         self.current_candle_tick = 0
+        self.next_candle_index = 0
         self.candles: list[Candle] = []
         self.live_candle = self._new_candle()
         self.trades: list[Trade] = []
@@ -130,6 +133,7 @@ class MarketSimulator:
         return self.state()
 
     def state(self) -> dict:
+        self.live_candle.end_tick = self.tick_index
         visible_candles = self.candles[-self.config.history_limit :] + [self.live_candle]
         return {
             "tick": self.tick_index,
@@ -163,6 +167,7 @@ class MarketSimulator:
             self.live_candle.update(self.last_price, 0)
 
         if self.current_candle_tick >= self.config.candle_ticks:
+            self.live_candle.end_tick = self.tick_index
             self.candles.append(self.live_candle)
             self.candles = self.candles[-self.config.history_limit :]
             self.live_candle = self._new_candle()
@@ -357,14 +362,23 @@ class MarketSimulator:
         self._prune_liquidity_lines()
 
     def _prune_liquidity_lines(self) -> None:
-        min_tick = self.tick_index - self.config.history_limit - 40
+        min_tick = self.tick_index - self.config.history_limit * self.config.candle_ticks - 40
         for line_id, line in list(self.liquidity_lines.items()):
             if line.end_tick is not None and line.end_tick < min_tick:
                 del self.liquidity_lines[line_id]
 
     def _new_candle(self) -> Candle:
-        index = len(self.candles)
-        return Candle(index, self.last_price, self.last_price, self.last_price, self.last_price)
+        index = self.next_candle_index
+        self.next_candle_index += 1
+        return Candle(
+            index=index,
+            start_tick=self.tick_index,
+            end_tick=self.tick_index,
+            open=self.last_price,
+            high=self.last_price,
+            low=self.last_price,
+            close=self.last_price,
+        )
 
     def _top_bids(self, limit: int) -> list[tuple[float, int]]:
         return sorted(self.buy_book.items(), reverse=True)[:limit]
@@ -379,7 +393,7 @@ class MarketSimulator:
         return {"asks": asks, "bids": bids, "maxQuantity": max_quantity}
 
     def _liquidity_payload(self) -> list[dict]:
-        min_tick = max(0, self.tick_index - self.config.history_limit - 20)
+        min_tick = max(0, self.tick_index - self.config.history_limit * self.config.candle_ticks - 20)
         lines = [
             line
             for line in self.liquidity_lines.values()
@@ -404,6 +418,8 @@ class MarketSimulator:
     def _candle_payload(candle: Candle) -> dict:
         return {
             "index": candle.index,
+            "startTick": candle.start_tick,
+            "endTick": candle.end_tick,
             "open": candle.open,
             "high": candle.high,
             "low": candle.low,

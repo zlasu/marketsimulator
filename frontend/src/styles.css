@@ -97,6 +97,7 @@ h1 {
 }
 
 .primary-button,
+.autoplay-button,
 .icon-button,
 .run-control button,
 .preset-select {
@@ -118,6 +119,18 @@ h1 {
   color: #10140f;
   border-color: #d8f76a;
   font-weight: 700;
+}
+
+.autoplay-button {
+  gap: 8px;
+  min-width: 116px;
+  padding: 0 13px;
+}
+
+.autoplay-button.active {
+  background: #26302b;
+  border-color: rgba(216, 247, 106, 0.55);
+  color: #d8f76a;
 }
 
 .preset-select {

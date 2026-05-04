@@ -1,46 +1,78 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
-import { Play, RotateCcw, StepForward } from "lucide-vue-next";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { Pause, Play, RotateCcw, StepForward } from "lucide-vue-next";
 
 const state = ref(null);
 const loading = ref(false);
 const runTicks = ref(10);
 const presets = ref(["BTCUSD"]);
 const selectedPreset = ref("BTCUSD");
+const autoplay = ref(false);
+let autoplayTimer = null;
+let autoplayBusy = false;
 
 const chartWidth = 1080;
 const chartHeight = 650;
 const volumeHeight = 96;
-const pricePad = 34;
+const priceTop = 26;
+const priceBottom = chartHeight - volumeHeight - 28;
+const priceHeight = priceBottom - priceTop;
+const visibleTickWindow = 520;
 
 const candles = computed(() => state.value?.candles ?? []);
 const trades = computed(() => state.value?.trades ?? []);
 const liquidity = computed(() => state.value?.liquidity ?? []);
 
+const chartTimeline = computed(() => {
+  const latestTick = state.value?.tick ?? 0;
+  const minTick = Math.max(0, latestTick - visibleTickWindow);
+  const maxTick = Math.max(latestTick, minTick + 1);
+  return { minTick, maxTick, tickSpan: Math.max(1, maxTick - minTick) };
+});
+
 const priceRange = computed(() => {
-  const prices = [];
-  candles.value.forEach((candle) => prices.push(candle.high, candle.low));
-  trades.value.forEach((trade) => prices.push(trade.price));
-  liquidity.value.slice(-800).forEach((line) => prices.push(line.price));
+  const { minTick } = chartTimeline.value;
+  const marketPrices = [];
+  candles.value
+    .filter((candle) => (candle.endTick ?? candle.startTick ?? 0) >= minTick)
+    .forEach((candle) => marketPrices.push(candle.high, candle.low, candle.open, candle.close));
+  trades.value.filter((trade) => trade.tick >= minTick).forEach((trade) => marketPrices.push(trade.price));
+
+  const prices = marketPrices.length
+    ? marketPrices
+    : liquidity.value
+        .filter((line) => (line.endTick ?? state.value?.tick ?? 0) >= minTick)
+        .map((line) => line.price);
+
   if (!prices.length) return { min: 95, max: 105 };
   const min = Math.min(...prices);
   const max = Math.max(...prices);
-  const mid = (min + max) / 2;
   const tickSize = state.value?.config?.tick_size ?? 0.01;
-  const pad = Math.max(tickSize * 20, mid * 0.0002, (max - min) * 0.18);
-  return { min: min - pad, max: max + pad };
+  const rawRange = Math.max(tickSize, max - min);
+  const minimumVisibleRange = tickSize <= 0.0001 ? tickSize * 18 : tickSize * 10;
+  const targetRange = Math.max(rawRange * 1.18, minimumVisibleRange);
+  const mid = (min + max) / 2;
+  return { min: mid - targetRange / 2, max: mid + targetRange / 2 };
 });
 
 const maxVolume = computed(() => Math.max(1, ...candles.value.map((candle) => candle.volume)));
 const maxLiquidity = computed(() => Math.max(1, ...liquidity.value.map((line) => line.initialQuantity)));
 
 const chartCandles = computed(() => {
-  const count = Math.max(1, candles.value.length);
-  const step = (chartWidth - 48) / count;
-  const bodyWidth = Math.max(5, Math.min(14, step * 0.58));
+  const { minTick, maxTick } = chartTimeline.value;
+  const { tickSpan } = chartTimeline.value;
+  const tickWidth = chartWidth / tickSpan;
 
-  return candles.value.map((candle, index) => {
-    const x = 24 + index * step + step / 2;
+  return candles.value
+    .map((candle) => {
+      const startTick = candle.startTick ?? candle.index * (state.value?.ticksPerCandle ?? 10);
+      const endTick = candle.endTick ?? startTick + (state.value?.ticksPerCandle ?? 10);
+      return { candle, startTick, endTick };
+    })
+    .filter(({ startTick, endTick }) => endTick >= minTick && startTick <= maxTick)
+    .map(({ candle, startTick, endTick }) => {
+    const x = xForTick((startTick + endTick) / 2);
+    const bodyWidth = Math.max(4, Math.min(14, (endTick - startTick || 1) * tickWidth * 0.58));
     const openY = yForPrice(candle.open);
     const closeY = yForPrice(candle.close);
     const highY = yForPrice(candle.high);
@@ -64,8 +96,7 @@ const chartCandles = computed(() => {
 
 const chartLiquidity = computed(() => {
   const latestTick = state.value?.tick ?? 0;
-  const minTick = Math.max(0, latestTick - 170);
-  const tickSpan = Math.max(1, latestTick - minTick);
+  const { minTick } = chartTimeline.value;
   const fadeTicks = 34;
 
   return liquidity.value
@@ -78,32 +109,31 @@ const chartLiquidity = computed(() => {
       const closedAge = line.endTick === null ? 0 : latestTick - line.endTick;
       const fade = line.endTick === null ? 1 : Math.max(0, 1 - closedAge / fadeTicks);
       const size = line.initialQuantity / maxLiquidity.value;
-      const x1 = Math.max(0, ((line.startTick - minTick) / tickSpan) * chartWidth);
-      const x2 = Math.min(chartWidth, ((endTick - minTick) / tickSpan) * chartWidth);
+      const x1 = Math.max(0, xForTick(line.startTick));
+      const x2 = Math.min(chartWidth, xForTick(endTick));
       const width = Math.max(2, x2 - x1);
       const alpha = Math.max(0.1, Math.min(0.78, size)) * fade;
+      const y = yForPrice(line.price);
       return {
         ...line,
         x: x1,
-        y: yForPrice(line.price),
+        y,
         width,
         height: Math.max(3, Math.min(8, 2 + size * 7)),
         alpha
       };
     })
-    .filter((line) => line.alpha > 0.02);
+    .filter((line) => line.alpha > 0.02 && line.y >= priceTop - 12 && line.y <= priceBottom + 12);
 });
 
 const chartTrades = computed(() => {
-  const latestTick = state.value?.tick ?? 0;
-  const minTick = Math.max(0, latestTick - 170);
-  const tickSpan = Math.max(1, latestTick - minTick);
+  const { minTick } = chartTimeline.value;
 
   return trades.value
     .filter((trade) => trade.tick >= minTick)
     .map((trade) => ({
       ...trade,
-      x: ((trade.tick - minTick) / tickSpan) * chartWidth,
+      x: xForTick(trade.tick),
       y: yForPrice(trade.price)
     }));
 });
@@ -119,8 +149,13 @@ const priceTicks = computed(() => {
 
 function yForPrice(price) {
   const { min, max } = priceRange.value;
-  const usableHeight = chartHeight - volumeHeight - pricePad;
-  return pricePad + ((max - price) / Math.max(1, max - min)) * usableHeight;
+  const normalized = (max - price) / Math.max(Number.EPSILON, max - min);
+  return priceTop + normalized * priceHeight;
+}
+
+function xForTick(tick) {
+  const { minTick, tickSpan } = chartTimeline.value;
+  return ((tick - minTick) / tickSpan) * chartWidth;
 }
 
 function formatPrice(price) {
@@ -161,7 +196,40 @@ async function nextTick(ticks = 1) {
   }
 }
 
+async function autoplayStep() {
+  if (!autoplay.value || autoplayBusy) return;
+  autoplayBusy = true;
+  try {
+    await nextTick(1);
+  } finally {
+    autoplayBusy = false;
+  }
+}
+
+function startAutoplay() {
+  if (autoplayTimer) return;
+  autoplay.value = true;
+  autoplayTimer = window.setInterval(autoplayStep, 320);
+}
+
+function stopAutoplay() {
+  autoplay.value = false;
+  if (autoplayTimer) {
+    window.clearInterval(autoplayTimer);
+    autoplayTimer = null;
+  }
+}
+
+function toggleAutoplay() {
+  if (autoplay.value) {
+    stopAutoplay();
+  } else {
+    startAutoplay();
+  }
+}
+
 async function reset() {
+  stopAutoplay();
   loading.value = true;
   try {
     await request("/api/reset", {
@@ -174,6 +242,7 @@ async function reset() {
 }
 
 onMounted(loadState);
+onBeforeUnmount(stopAutoplay);
 </script>
 
 <template>
@@ -207,6 +276,11 @@ onMounted(loadState);
         </select>
         <button class="icon-button" type="button" title="Reset" :disabled="loading" @click="reset">
           <RotateCcw :size="18" />
+        </button>
+        <button class="autoplay-button" type="button" :class="{ active: autoplay }" :title="autoplay ? 'Pause autoplay' : 'Start autoplay'" @click="toggleAutoplay">
+          <Pause v-if="autoplay" :size="18" />
+          <Play v-else :size="18" />
+          {{ autoplay ? "Pause" : "Autoplay" }}
         </button>
         <button class="primary-button" type="button" :disabled="loading" @click="nextTick(1)">
           <StepForward :size="18" />
