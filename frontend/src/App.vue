@@ -27,6 +27,7 @@ const visibleTickWindow = 520;
 const candles = computed(() => state.value?.candles ?? []);
 const trades = computed(() => state.value?.trades ?? []);
 const liquidity = computed(() => state.value?.liquidity ?? []);
+const orderEvents = computed(() => state.value?.orderEvents ?? []);
 const analytics = computed(() => state.value?.analytics ?? null);
 const prediction = computed(() => analytics.value?.prediction ?? null);
 const liveSymbols = computed(() => liveMarkets.value?.[liveExchange.value] ?? []);
@@ -146,6 +147,22 @@ const chartTrades = computed(() => {
     }));
 });
 
+const chartWalls = computed(() => {
+  const walls = analytics.value?.walls?.levels ?? [];
+  return walls
+    .map((wall) => {
+      const y = yForPrice(wall.price);
+      return {
+        ...wall,
+        y,
+        alpha: Math.max(0.34, Math.min(0.92, wall.strength ?? 0.5)),
+        strokeWidth: Math.max(1.2, Math.min(4.5, 1 + (wall.strength ?? 0.5) * 3.5)),
+        label: wall.side === "sell" ? "R" : "S"
+      };
+    })
+    .filter((wall) => wall.y >= priceTop - 8 && wall.y <= priceBottom + 8);
+});
+
 const priceTicks = computed(() => {
   const { min, max } = priceRange.value;
   const steps = 6;
@@ -207,6 +224,19 @@ function predictionLabel(value) {
   if (value.direction === "up") return "UP";
   if (value.direction === "down") return "DOWN";
   return "FLAT";
+}
+
+function eventLabel(reason) {
+  if (reason === "liquidity_added") return "added";
+  if (reason === "likely_filled") return "filled";
+  if (reason === "mixed_fill_cancel") return "mixed";
+  return "cancel/reprice";
+}
+
+function pressureLabel(value) {
+  if (value > 0.12) return "bullish";
+  if (value < -0.12) return "bearish";
+  return "neutral";
 }
 
 async function request(path, options = {}) {
@@ -465,6 +495,26 @@ onBeforeUnmount(stopAutoplay);
             />
           </g>
 
+          <g class="wall-layer">
+            <g v-for="wall in chartWalls" :key="`${wall.side}-${wall.price}`" :opacity="wall.alpha">
+              <line
+                x1="0"
+                :x2="chartWidth"
+                :y1="wall.y"
+                :y2="wall.y"
+                :class="wall.side === 'sell' ? 'resistance-wall' : 'support-wall'"
+                :stroke-width="wall.strokeWidth"
+              />
+              <text
+                :x="12"
+                :y="wall.y - 6"
+                :class="wall.side === 'sell' ? 'resistance-label' : 'support-label'"
+              >
+                {{ wall.label }} {{ formatPrice(wall.price) }}
+              </text>
+            </g>
+          </g>
+
           <g class="candles">
             <g v-for="candle in chartCandles" :key="`${candle.index}-${candle.endTick}-${candle.volume}`">
               <line :x1="candle.x" :x2="candle.x" :y1="candle.highY" :y2="candle.lowY" :class="candle.up ? 'up-stroke' : 'down-stroke'" />
@@ -539,11 +589,53 @@ onBeforeUnmount(stopAutoplay);
           <div class="reason-list" v-if="prediction?.reasons?.length">
             <span v-for="reason in prediction.reasons" :key="reason">{{ reason }}</span>
           </div>
+          <div class="lifecycle-panel" v-if="analytics.lifecycle">
+            <div>
+              <span>Lifecycle</span>
+              <strong :class="pressureLabel(analytics.lifecycle.trendPressure)">
+                {{ pressureLabel(analytics.lifecycle.trendPressure) }} {{ analytics.lifecycle.trendPressure.toFixed(3) }}
+              </strong>
+            </div>
+            <div>
+              <span>Fills</span>
+              <strong>{{ analytics.lifecycle.fillPressure.toFixed(3) }}</strong>
+            </div>
+            <div>
+              <span>Cancels</span>
+              <strong>{{ analytics.lifecycle.cancelPressure.toFixed(3) }}</strong>
+            </div>
+            <div>
+              <span>Adds</span>
+              <strong>{{ analytics.lifecycle.addPressure.toFixed(3) }}</strong>
+            </div>
+            <div>
+              <span>Spoof risk</span>
+              <strong>{{ formatPercent(analytics.lifecycle.spoofRisk) }}</strong>
+            </div>
+            <div>
+              <span>Events</span>
+              <strong>{{ analytics.lifecycle.events }}</strong>
+            </div>
+          </div>
           <div class="depth-bands">
             <div v-for="band in analytics.depthBands" :key="band.label">
               <span>{{ band.label }}</span>
               <strong>{{ formatQuantity(band.bid) }} / {{ formatQuantity(band.ask) }}</strong>
               <small>{{ band.imbalance.toFixed(3) }}</small>
+            </div>
+          </div>
+          <div class="deep-depth" v-if="analytics.deepDepth?.length">
+            <div v-for="row in analytics.deepDepth" :key="row.label">
+              <span>{{ row.label }} {{ formatPercent(row.coveragePct) }}</span>
+              <strong>{{ formatQuantity(row.bidDepth) }} / {{ formatQuantity(row.askDepth) }}</strong>
+              <small>{{ row.bidOrders }} / {{ row.askOrders }}</small>
+            </div>
+          </div>
+          <div class="event-list" v-if="orderEvents.length">
+            <div v-for="event in [...orderEvents].reverse().slice(0, 8)" :key="`${event.tick}-${event.side}-${event.price}-${event.quantity}`" :class="event.reason">
+              <span>{{ event.side === "buy" ? "Bid" : "Ask" }} {{ formatPrice(event.price) }}</span>
+              <strong>{{ eventLabel(event.reason) }}</strong>
+              <small>{{ formatQuantity(event.quantity) }}</small>
             </div>
           </div>
         </section>
